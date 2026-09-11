@@ -24,22 +24,29 @@ class TeaArmRobot(BaseRobot):
     URDF_REPO_URL = "https://github.com/qrafty-ai/hardware_designs.git"
     URDF_PATH = "teaarm_description/urdf/teaarm_asm.urdf.xacro"
 
-    def __init__(self, urdf_string: str | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        urdf_string: str | None = None,
+        self_collision: bool = True,
+        **kwargs: Any,
+    ) -> None:
         super().__init__()
         urdf = self._load_urdf(urdf_string)
         self.robot: pk.Robot = pk.Robot.from_urdf(urdf)
-
-        collision_data = self._load_collision_data()
-        if collision_data is not None:
-            sphere_decomposition, ignore_pairs = collision_data
-            self.robot_coll = pk.collision.RobotCollision.from_sphere_decomposition(
-                sphere_decomposition,
-                urdf,
-                user_ignore_pairs=ignore_pairs,
-                ignore_immediate_adjacents=True,
-            )
-        else:
-            self.robot_coll = pk.collision.RobotCollision.from_urdf(urdf)
+        self.self_collision = bool(self_collision)
+        self.robot_coll = None
+        if self.self_collision:
+            collision_data = self._load_collision_data()
+            if collision_data is not None:
+                sphere_decomposition, ignore_pairs = collision_data
+                self.robot_coll = pk.collision.RobotCollision.from_sphere_decomposition(
+                    sphere_decomposition,
+                    urdf,
+                    user_ignore_pairs=ignore_pairs,
+                    ignore_immediate_adjacents=True,
+                )
+            else:
+                self.robot_coll = pk.collision.RobotCollision.from_urdf(urdf)
 
         self.L_ee = "frame_left_arm_ee"
         self.R_ee = "frame_right_arm_ee"
@@ -266,14 +273,15 @@ class TeaArmRobot(BaseRobot):
 
         costs.append(pk.costs.limit_cost(self.robot, JointVar(0), weight=50.0))
 
-        costs.append(
-            pk.costs.self_collision_cost(
-                self.robot,
-                self.robot_coll,
-                JointVar(0),
-                margin=0.05,
-                weight=10.0,
+        if self.self_collision and self.robot_coll is not None:
+            costs.append(
+                pk.costs.self_collision_cost(
+                    self.robot,
+                    self.robot_coll,
+                    JointVar(0),
+                    margin=0.05,
+                    weight=10.0,
+                )
             )
-        )
 
         return costs

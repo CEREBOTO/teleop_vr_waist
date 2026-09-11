@@ -373,6 +373,9 @@ class Teleop:
 
     async def _handle_video_message(self, websocket: WebSocket, message: Any) -> None:
         msg_type = message.get("type")
+        if not self.__settings.enable_video:
+            self.__logger.info("video disabled; ignoring %s", msg_type)
+            return
         self.__logger.info(f"Received video message: {msg_type}")
 
         if msg_type == "video_request":

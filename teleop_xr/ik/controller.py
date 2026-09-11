@@ -51,6 +51,7 @@ class IKController:
         # Snapshots
         self.snapshot_xr = {}
         self.snapshot_robot = {}
+        self._last_xr_poses: dict[str, jaxlie.SE3] = {}
 
         # Filter for joint configuration
         self.filter = None
@@ -77,6 +78,7 @@ class IKController:
         self.active = False
         self.snapshot_xr = {}
         self.snapshot_robot = {}
+        self._last_xr_poses = {}
         if self.filter is not None:
             self.filter.reset()
 
@@ -333,6 +335,7 @@ class IKController:
         self.active = False
         self.snapshot_xr = {}
         self.snapshot_robot = {}
+        self._last_xr_poses = {}
         if self.filter is not None:
             self.filter.reset()
         logger.info("[IKController] Reset triggered")
@@ -353,73 +356,70 @@ class IKController:
 
         is_deadman_active = self._check_deadman(state)
         curr_xr_poses = self._get_device_poses(state)
-
-        # Check if we have all necessary poses
         required_keys = self.robot.supported_frames
-        has_all_poses = all(k in curr_xr_poses for k in required_keys)
 
-        if is_deadman_active and has_all_poses:
-            if not self.active:
-                # Engagement transition: take snapshots
-                self.active = True
-                self.snapshot_xr = curr_xr_poses
-
-                # Get initial robot FK poses
-                # Cast q_current to jnp.ndarray for JAX-based robot models
-                fk_poses = self.robot.forward_kinematics(jnp.asarray(q_current))
-                self.snapshot_robot = {k: fk_poses[k] for k in required_keys}
-
-                logger.info(f"[IKController] Initial Robot FK: {self.snapshot_robot}")
-                return q_current
-
-            # Active control
-            target_L: jaxlie.SE3 | None = None
-            target_R: jaxlie.SE3 | None = None
-            target_Head: jaxlie.SE3 | None = None
-
-            if "left" in required_keys:
-                target_L = self.compute_teleop_transform(
-                    curr_xr_poses["left"],
-                    self.snapshot_xr["left"],
-                    self.snapshot_robot["left"],
-                )
-            if "right" in required_keys:
-                target_R = self.compute_teleop_transform(
-                    curr_xr_poses["right"],
-                    self.snapshot_xr["right"],
-                    self.snapshot_robot["right"],
-                )
-            if "head" in required_keys:
-                target_Head = self.compute_teleop_transform(
-                    curr_xr_poses["head"],
-                    self.snapshot_xr["head"],
-                    self.snapshot_robot["head"],
-                )
-
-            if self.solver is not None:
-                # Solve for new configuration using target poses and current config
-                # Cast inputs to JAX arrays and output back to numpy
-                new_config_jax = self.solver.solve(
-                    target_L,
-                    target_R,
-                    target_Head,
-                    jnp.asarray(q_current),
-                )
-                new_config = np.array(new_config_jax)
-
-                if self.filter is not None:
-                    self.filter.add_data(new_config)
-                    if self.filter.data_ready():
-                        return self.filter.filtered_data
-
-                logger.debug(f"[IKController] New Config: {new_config}")
-                return new_config
-
-            return q_current
-        else:
+        if not is_deadman_active:
             if self.active:
-                # Disengagement transition
                 self.active = False
+                self._last_xr_poses = {}
                 if self.filter is not None:
                     self.filter.reset()
             return q_current
+
+        if self.active:
+            # Missing a controller pose for a frame is STALE: keep last good pose
+            # instead of dropping deadman / resnapshoting.
+            xr_poses = {**self._last_xr_poses, **curr_xr_poses}
+            self._last_xr_poses.update(curr_xr_poses)
+        else:
+            xr_poses = curr_xr_poses
+            if not all(k in xr_poses for k in required_keys):
+                return q_current
+            self.active = True
+            self.snapshot_xr = xr_poses
+            self._last_xr_poses = dict(xr_poses)
+            fk_poses = self.robot.forward_kinematics(jnp.asarray(q_current))
+            self.snapshot_robot = {k: fk_poses[k] for k in required_keys}
+            logger.info(f"[IKController] Initial Robot FK: {self.snapshot_robot}")
+            return q_current
+
+        target_L: jaxlie.SE3 | None = None
+        target_R: jaxlie.SE3 | None = None
+        target_Head: jaxlie.SE3 | None = None
+
+        if "left" in required_keys:
+            target_L = self.compute_teleop_transform(
+                xr_poses["left"],
+                self.snapshot_xr["left"],
+                self.snapshot_robot["left"],
+            )
+        if "right" in required_keys:
+            target_R = self.compute_teleop_transform(
+                xr_poses["right"],
+                self.snapshot_xr["right"],
+                self.snapshot_robot["right"],
+            )
+        if "head" in required_keys:
+            target_Head = self.compute_teleop_transform(
+                xr_poses["head"],
+                self.snapshot_xr["head"],
+                self.snapshot_robot["head"],
+            )
+
+        if self.solver is None:
+            return q_current
+
+        new_config_jax = self.solver.solve(
+            target_L,
+            target_R,
+            target_Head,
+            jnp.asarray(q_current),
+        )
+        new_config = np.array(new_config_jax)
+
+        if self.filter is not None:
+            self.filter.add_data(new_config)
+            if self.filter.data_ready():
+                return self.filter.filtered_data
+
+        return new_config

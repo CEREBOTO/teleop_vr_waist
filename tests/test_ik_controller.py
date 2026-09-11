@@ -145,6 +145,41 @@ def test_ik_controller_deadman_and_step_transitions():
     assert controller.filter.data_ready() is False
 
 
+def test_ik_controller_stale_pose_keeps_control():
+    robot = DummyRobot()
+    solver = DummySolver(np.array([1.0, 2.0]))
+    controller = IKController(robot=robot, solver=_as_solver(solver))
+    q0 = np.array([0.0, 0.0])
+    left = XRInputSource(
+        role=XRDeviceRole.CONTROLLER,
+        handedness=XRHandedness.LEFT,
+        gripPose=_pose(0.0, 0.0, 0.0),
+        gamepad=_deadman_gamepad(True),
+    )
+    right = XRInputSource(
+        role=XRDeviceRole.CONTROLLER,
+        handedness=XRHandedness.RIGHT,
+        gripPose=_pose(0.1, 0.0, 0.0),
+        gamepad=_deadman_gamepad(True),
+    )
+    head = XRInputSource(role=XRDeviceRole.HEAD, pose=_pose(0.0, 0.2, 0.0))
+    state = XRState(timestamp_unix_ms=1.0, devices=[left, right, head])
+    controller.step(state, q0)
+    controller.step(state, q0)
+    assert controller.active is True
+
+    left_stale = XRInputSource(
+        role=XRDeviceRole.CONTROLLER,
+        handedness=XRHandedness.LEFT,
+        gripPose=None,
+        gamepad=_deadman_gamepad(True),
+    )
+    stale = XRState(timestamp_unix_ms=2.0, devices=[left_stale, right, head])
+    out = controller.step(stale, q0)
+    assert controller.active is True
+    np.testing.assert_allclose(out, [1.0, 2.0])
+
+
 def test_ik_controller_deadman_requires_two_buttons():
     robot = DummyRobot()
     controller = IKController(robot=robot)

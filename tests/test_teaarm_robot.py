@@ -95,6 +95,26 @@ def test_teaarm_build_costs():
     assert len(costs) >= 6
 
 
+def test_teaarm_build_costs_without_self_collision():
+    robot = TeaArmRobot(urdf_string=MINIMAL_TEAARM_URDF, self_collision=False)
+    assert robot.self_collision is False
+    target = jaxlie.SE3.identity()
+    q = robot.get_default_config()
+    with_collision = TeaArmRobot(urdf_string=MINIMAL_TEAARM_URDF).build_costs(
+        target_L=target,
+        target_R=target,
+        target_Head=None,
+        q_current=q,
+    )
+    without = robot.build_costs(
+        target_L=target,
+        target_R=target,
+        target_Head=None,
+        q_current=q,
+    )
+    assert len(without) == len(with_collision) - 1
+
+
 def test_teaarm_orientation_and_scale():
     robot = TeaArmRobot(urdf_string=MINIMAL_TEAARM_URDF)
     assert isinstance(robot.orientation, jaxlie.SO3)

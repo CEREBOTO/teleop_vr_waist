@@ -25,14 +25,17 @@ class PyrokiSolver:
     warmup_error: str | None
     warmed_target_patterns: tuple[tuple[bool, bool, bool], ...]
 
-    def __init__(self, robot: BaseRobot):
+    def __init__(self, robot: BaseRobot, max_iterations: int = 15):
         """
         Initialize the solver with a robot model.
 
         Args:
             robot: The robot model providing kinematic info and costs.
+            max_iterations: jaxls iteration cap. Hardware teleop uses 10 to
+                match Dora's mink budget; the sim demo keeps the default 15.
         """
         self.robot = robot
+        self.max_iterations = int(max_iterations)
         self.warmup_complete = False
         self.warmup_error = None
         self.warmed_target_patterns = tuple()
@@ -88,7 +91,7 @@ class PyrokiSolver:
             initial_vals=initial_vals,
             verbose=False,
             linear_solver="dense_cholesky",
-            termination=jaxls.TerminationConfig(max_iterations=15),
+            termination=jaxls.TerminationConfig(max_iterations=self.max_iterations),
         )
 
         # Return the optimized joint configuration for the first (and only) timestep
